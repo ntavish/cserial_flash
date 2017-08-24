@@ -451,6 +451,19 @@ uint32_t sf_capacity(const uint8_t *id)
     if ((id[0]==0 && id[1]==0 && id[2]==0) || 
         (id[0]==255 && id[1]==255 && id[2]==255)) {
         n = 0;
+    } else
+    if(id[0]==0x1f)
+    {
+        switch(id[1])
+        {
+            case 0x84: n = 4194304; break;
+            case 0x85: n = 8388608; break;
+            case 0x86: n = 16777216; break;
+            case 0x87: n = 33554432; break;
+            case 0x15: n = 33554432; break;
+            case 0x16: n = 67108864; break;
+            case 0x17: n = 134217728; break;
+        }
     }
     //Serial.printf("capacity %lu\n", n);
     return n;
