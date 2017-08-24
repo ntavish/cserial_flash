@@ -7,10 +7,10 @@
 #include <nrf_delay.h>
 #include <nrf_gpio.h>
 
-#define SPI_MISO_PIN    2
-#define SPI_MOSI_PIN    2
-#define SPI_SCK_PIN     2
-#define SPI_SS_PIN      2
+#define SPI_MISO_PIN    30
+#define SPI_MOSI_PIN    29
+#define SPI_SCK_PIN     0
+#define SPI_SS_PIN      7
 
 static int spi_init();
 static int spi_deinit();
