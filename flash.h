@@ -23,13 +23,13 @@ typedef struct _spi_interface
     void (*end_tx)();
     uint8_t (*tx)(uint8_t data);
     uint16_t (*tx16)(uint16_t data);
-    void (*tx_buf)(void *buf, size_t count);
+    void (*tx_buf)(void *buf, void *rdbuf, size_t count);
     // chip select functions
     void (*cs_assert)();
     void (*cs_release)();
 
     // delay function
-    void (*delay_us)(int);
+    void (*delay_us)(uint32_t);
 }spi_interface;
 
 int sf_begin(spi_interface * spi_if);
@@ -39,7 +39,7 @@ void sf_sleep();
 void sf_wakeup();
 void sf_readID(uint8_t *buf);
 void sf_readSerialNumber(uint8_t *buf);
-void sf_read(uint32_t addr, void *buf, uint32_t len);
+void sf_read(uint32_t addr, void *buf, void *rdbuf, uint32_t len);
 int sf_ready();
 void sf_wait();
 void sf_write(uint32_t addr, const void *buf, uint32_t len);

@@ -77,7 +77,7 @@ void sf_wait(void)
     //Serial.println();
 }
 
-void sf_read(uint32_t addr, void *buf, uint32_t len)
+void sf_read(uint32_t addr, void *buf, void *rdbuf, uint32_t len)
 {
     uint8_t *p = (uint8_t *)buf;
     uint8_t b, f, status, cmd;
@@ -157,7 +157,7 @@ void sf_read(uint32_t addr, void *buf, uint32_t len)
             spi_if->tx16(0x0300 | ((addr >> 16) & 255));
             spi_if->tx16(addr);
         }
-        spi_if->tx_buf(p, rdlen);
+        spi_if->tx_buf(p, (void *)((uint8_t*)rdbuf+(p-(uint8_t*)buf)), rdlen);
         CSRELEASE();
         p += rdlen;
         addr += rdlen;
