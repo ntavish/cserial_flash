@@ -30,6 +30,13 @@
 #include <string.h>
 #include "flash.h"
 
+#include "app_error.h"
+#define NRF_LOG_MODULE_NAME "FLASH"
+#include "nrf_log.h"
+#include "nrf_log_ctrl.h"
+
+// chip JEDEC ID
+static uint8_t id[5];
 static uint8_t flags = 0;	// chip features
 static uint8_t busy = 0;
     // 1 = suspendable program operation
@@ -45,7 +52,17 @@ static spi_interface * spi_if;
 #define FLAG_DIFF_SUSPEND	0x04	// uses 2 different suspend commands
 #define FLAG_MULTI_DIE		0x08	// multiple die, don't read cross 32M barrier
 #define FLAG_256K_BLOCKS	0x10	// has 256K erase blocks
+#define FLAG_4K_BLOCKS	    0x20	// has 256K erase blocks
 #define FLAG_DIE_MASK		0xC0	// top 2 bits count during multi-die erase
+
+
+#define ID0_WINBOND	    0xEF
+#define ID0_SPANSION	0x01
+#define ID0_MICRON	    0x20
+#define ID0_MACRONIX	0xC2
+#define ID0_SST		    0xBF
+#define ID0_ADESTO	    0x1F
+
 
 void sf_wait(void)
 {
@@ -77,7 +94,7 @@ void sf_wait(void)
     //Serial.println();
 }
 
-void sf_read(uint32_t addr, void *buf, void *rdbuf, uint32_t len)
+void sf_read(uint32_t addr, void *buf, uint32_t len)
 {
     uint8_t *p = (uint8_t *)buf;
     uint8_t b, f, status, cmd;
@@ -102,7 +119,7 @@ void sf_read(uint32_t addr, void *buf, void *rdbuf, uint32_t len)
         if (b == 0) {
             // chip is no longer busy :-)
             busy = 0;
-        } else if (b < 3) {
+        } else if ((b < 3) && (id[0] != ID0_ADESTO)) {
             // TODO: this may not work on Spansion chips
             // which apparently have 2 different suspend
             // commands, for program vs erase
@@ -147,6 +164,15 @@ void sf_read(uint32_t addr, void *buf, void *rdbuf, uint32_t len)
                 rdlen = 0x2000000 - (addr & 0x1FFFFFF);
             }
         }
+        if(id[0] == ID0_ADESTO)
+        {
+            // rdlen = (len>255)?255:len;
+            if(rdlen > 256)
+            {
+                rdlen = 256;
+            }
+        }
+
         CSASSERT();
         // TODO: FIFO optimize....
         if (f & FLAG_32BIT_ADDR) {
@@ -154,10 +180,17 @@ void sf_read(uint32_t addr, void *buf, void *rdbuf, uint32_t len)
             spi_if->tx16(addr >> 16);
             spi_if->tx16(addr);
         } else {
-            spi_if->tx16(0x0300 | ((addr >> 16) & 255));
+            spi_if->tx16(0x0300 | ((addr >> 16) & 0xff));
             spi_if->tx16(addr);
         }
-        spi_if->tx_buf(p, (void *)((uint8_t*)rdbuf+(p-(uint8_t*)buf)), rdlen);
+        
+        // uint32_t sent = 0;
+        // while(sent < rdlen)
+        // {
+        //     p[sent++] = spi_if->tx(0);
+        // }
+        spi_if->tx_buf(NULL, p, rdlen);
+
         CSRELEASE();
         p += rdlen;
         addr += rdlen;
@@ -182,7 +215,7 @@ void sf_write(uint32_t addr, const void *buf, uint32_t len)
     const uint8_t *p = (const uint8_t *)buf;
     uint32_t max, pagelen;
 
-    //Serial.printf("WR: addr %08X, len %d\n", addr, len);
+    // NRF_LOG_RAW_INFO("WR: addr %08X, len %d\r\n", addr, len);
     do {
         if (busy) sf_wait();
         spi_if->begin_tx();
@@ -192,7 +225,7 @@ void sf_write(uint32_t addr, const void *buf, uint32_t len)
         CSRELEASE();
         max = 256 - (addr & 0xFF);
         pagelen = (len <= max) ? len : max;
-        //Serial.printf("WR: addr %08X, pagelen %d\n", addr, pagelen);
+        NRF_LOG_RAW_INFO("WR: addr %08X, pagelen %d\r\n", addr, pagelen);
         spi_if->delay_us(1); // TODO: reduce this, but prefer safety first
         CSASSERT();
         if (flags & FLAG_32BIT_ADDR) {
@@ -208,6 +241,7 @@ void sf_write(uint32_t addr, const void *buf, uint32_t len)
         do {
             spi_if->tx(*p++);
         } while (--pagelen > 0);
+        // spi_if->tx_buf((void *)p, NULL, pagelen);
         CSRELEASE();
         busy = 4;
         spi_if->end_tx();
@@ -217,7 +251,6 @@ void sf_write(uint32_t addr, const void *buf, uint32_t len)
 void sf_eraseAll()
 {
     if (busy) sf_wait();
-    uint8_t id[5];
     sf_readID(id);
     //Serial.printf("ID: %02X %02X %02X\n", id[0], id[1], id[2]);
     if (id[0] == 0x20 && id[2] >= 0x20 && id[2] <= 0x22) {
@@ -266,6 +299,9 @@ void sf_eraseAll()
 void sf_eraseBlock(uint32_t addr)
 {
     uint8_t f = flags;
+
+    uint32_t bsize = sf_blockSize();
+
     if (busy) sf_wait();
     spi_if->begin_tx();
     CSASSERT();
@@ -278,8 +314,16 @@ void sf_eraseBlock(uint32_t addr)
         spi_if->tx16(addr >> 16);
         spi_if->tx16(addr);
     } else {
-        spi_if->tx16(0xD800 | ((addr >> 16) & 255));
-        spi_if->tx16(addr);
+        if (bsize == 4096)
+        {
+            spi_if->tx16(0x2000 | ((addr >> 16) & 255));
+            spi_if->tx16(addr);
+        }
+        else
+        {
+            spi_if->tx16(0xD800 | ((addr >> 16) & 255));
+            spi_if->tx16(addr);
+        }
     }
     CSRELEASE();
     spi_if->end_tx();
@@ -320,13 +364,6 @@ int sf_ready()
     return RET_OK;
 }
 
-
-#define ID0_WINBOND	0xEF
-#define ID0_SPANSION	0x01
-#define ID0_MICRON	0x20
-#define ID0_MACRONIX	0xC2
-#define ID0_SST		0xBF
-
 //#define FLAG_32BIT_ADDR	0x01	// larger than 16 MByte address
 //#define FLAG_STATUS_CMD70	0x02	// requires special busy flag check
 //#define FLAG_DIFF_SUSPEND	0x04	// uses 2 different suspend commands
@@ -334,7 +371,7 @@ int sf_ready()
 
 int sf_begin(spi_interface * sif)
 {
-    uint8_t id[5];
+    // uint8_t id[5];  // useing file scope one
     uint8_t f;
     uint32_t size;
 
@@ -379,6 +416,10 @@ int sf_begin(spi_interface * sif)
     if (id[0] == ID0_MICRON) {
         // Micron requires busy checks with a different command
         f |= FLAG_STATUS_CMD70; // TODO: all or just multi-die chips?
+    }
+    if (id[0] == ID0_ADESTO)
+    {
+        f |= FLAG_4K_BLOCKS;
     }
     flags = f;
     sf_readID(id);
@@ -438,6 +479,23 @@ void sf_readSerialNumber(uint8_t *buf) //needs room for 8 bytes
 //	Serial.printf("Serial Number: %02X %02X %02X %02X %02X %02X %02X %02X\n", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
 }
 
+// for adesto chips
+void sf_readSerialNumber2(uint8_t *buf) //needs room for 3
+{
+    if (busy) sf_wait();
+    spi_if->begin_tx();
+    CSASSERT();
+    spi_if->tx(0x90);			
+    spi_if->tx16(0);	
+    spi_if->tx(0);
+    for (int i=0; i<2; i++) {		
+        buf[i] = spi_if->tx(0);
+    }
+    CSRELEASE();
+    spi_if->end_tx();
+//	Serial.printf("Serial Number: %02X %02X %02X %02X %02X %02X %02X %02X\n", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
+}
+
 uint32_t sf_capacity(const uint8_t *id)
 {
     uint32_t n = 1048576; // unknown chips, default to 1 MByte
@@ -456,13 +514,13 @@ uint32_t sf_capacity(const uint8_t *id)
     {
         switch(id[1])
         {
-            case 0x84: n = 4194304; break;
-            case 0x85: n = 8388608; break;
-            case 0x86: n = 16777216; break;
-            case 0x87: n = 33554432; break;
-            case 0x15: n = 33554432; break;
-            case 0x16: n = 67108864; break;
-            case 0x17: n = 134217728; break;
+            case 0x84: n = 4194304/8; break;
+            case 0x85: n = 8388608/8; break;
+            case 0x86: n = 16777216/8; break;
+            case 0x87: n = 33554432/8; break;
+            case 0x15: n = 33554432/8; break;
+            case 0x16: n = 67108864/8; break;
+            case 0x17: n = 134217728/8; break;
         }
     }
     //Serial.printf("capacity %lu\n", n);
@@ -473,6 +531,8 @@ uint32_t sf_blockSize()
 {
     // Spansion chips >= 512 mbit use 256K sectors
     if (flags & FLAG_256K_BLOCKS) return 262144;
+
+    if (flags & FLAG_4K_BLOCKS) return 4096;
     // everything else seems to have 64K sectors
     return 65536;
 }

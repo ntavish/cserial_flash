@@ -7,6 +7,11 @@
 #include <nrf_delay.h>
 #include <nrf_gpio.h>
 
+#include "app_error.h"
+#define NRF_LOG_MODULE_NAME "NRF_SPI"
+#include "nrf_log.h"
+#include "nrf_log_ctrl.h"
+
 #define SPI_MISO_PIN    30
 #define SPI_MOSI_PIN    29
 #define SPI_SCK_PIN     0
@@ -47,7 +52,7 @@ static int spi_init()
     nrf_gpio_pin_set(SPI_SS_PIN);
     nrf_gpio_cfg_output(SPI_SS_PIN);
     
-    config.frequency = NRF_DRV_SPI_FREQ_1M;
+    config.frequency = NRF_DRV_SPI_FREQ_8M;
     config.mode = NRF_DRV_SPI_MODE_0;
     config.bit_order = NRF_DRV_SPI_BIT_ORDER_MSB_FIRST;
     config.miso_pin = SPI_MISO_PIN;
@@ -84,22 +89,48 @@ static void spi_end_tx()
 static uint8_t spi_tx(uint8_t data)
 {
     uint8_t rdata;
+    // NRF_LOG_RAW_INFO("SPI_TX  : %8X", data);
     nrf_drv_spi_transfer(&m_spi_master_0, &data, 1, &rdata, 1);
-
+    // NRF_LOG_RAW_INFO(" %8X\r\n", rdata);
     return rdata;
 }
 
 static uint16_t spi_tx16(uint16_t data)
 {
     uint16_t rdata;
-    nrf_drv_spi_transfer(&m_spi_master_0, (uint8_t*)&data, 2, (uint8_t*)&rdata, 2);
-
+    // NRF_LOG_RAW_INFO("SPI_TX16: %8X", data);
+    // nrf_drv_spi_transfer(&m_spi_master_0, (uint8_t*)&data, 2, (uint8_t*)&rdata, 2);
+    rdata = spi_tx(data >> 8) << 8;
+    rdata |= spi_tx(data & 0xff);
+    // NRF_LOG_RAW_INFO(" %8X\r\n", rdata);
     return rdata;
 }
 
 static void spi_tx_buf(void *buf, void *rdbuf, size_t count)
 {
-    nrf_drv_spi_transfer(&m_spi_master_0, buf, count, rdbuf, count);
+    // nrf_drv_spi_transfer(&m_spi_master_0, buf, (buf==NULL)?0:count, rdbuf, (rdbuf==NULL)?0:count);
+    size_t sent=0;
+    while(count>0)
+    {
+        uint8_t blen;
+        if(count > 255)
+        {
+            blen = 255;
+        }
+        else
+        {
+            blen = count;
+        }
+
+        // NRF_LOG_RAW_INFO("RX: %d\r\n", blen);
+        nrf_drv_spi_transfer(&m_spi_master_0, buf+sent, blen, rdbuf+sent, blen);
+
+        count -= blen; 
+        sent += blen;
+    }
+    // NRF_LOG_RAW_INFO("RX: ");
+    // NRF_LOG_RAW_HEXDUMP_INFO(rdbuf, count);
+    // NRF_LOG_RAW_INFO("\r\n");
 }
 
 static void spi_cs_assert()
